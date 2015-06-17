@@ -3,7 +3,8 @@ __author__ = 'fki'
 from ckan.lib.cli import CkanCommand
 import ckan.plugins.toolkit as tk
 from ckan.lib.base import model
-
+import requests
+import json
 
 class Purge(CkanCommand):
     '''Purges datasets by a given attribute.'''
@@ -16,27 +17,30 @@ class Purge(CkanCommand):
     def command(self):
         self._load_config()
 
+        koeln = False
         if len(self.args) > 0:
             fq = self.args[0]
+            if fq == 'koeln':
+                koeln = True
         else:
             fq = None
 
-        package_search = tk.get_action('package_search')
+        if not koeln:
+            self._generic_command(fq)
+        else:
+            self._koeln()
+
+    def _koeln(self):
+        url = 'http://offenedaten-koeln.de/api/3/action/package_list?limit=1000'
+        result = requests.get('http://offenedaten-koeln.de/api/3/action/package_list?limit=1000')
         package_delete = tk.get_action('package_delete')
         context = {'model': model, 'session': model.Session, 'ignore_auth': True}
         self.admin_user = tk.get_action('get_site_user')(context, {})
         context = {'model': model, 'session': model.Session, 'user': self.admin_user['name']}
-
-        search_params = {'rows': 100000}
-        if fq:
-            search_params['fq'] = fq
-
-        result = package_search(context, search_params)
-        result = result['results']
-
+        result = json.loads(result.text)
+        result = result['result']
         for r in result:
-            print r['title'][0:40] + '... - ' + r['name']
-
+            print r
         print '============================================================='
         print str(len(result)) + ' Datasets found.'
         input = raw_input("Type in 'delete' for deleting all shown datasets. Type 'exit' for quitting. [delete/exit] ")
@@ -46,9 +50,9 @@ class Purge(CkanCommand):
         if input == 'delete':
             for r in result:
                 try:
-                    delete_result = package_delete(context, {'id': r['id']})
-                    print '%s deleted' % r['name']
-                    self._purge(r['id'])
+                    delete_result = package_delete(context, {'name': r})
+                    print '%s deleted' % r
+                    #self._purge(r['id'])
                     success += 1
                 except Exception as e:
                     print 'ERROR: ' + e.message
@@ -58,11 +62,51 @@ class Purge(CkanCommand):
         print 'Successfully deleted and purged %d Datasets' % success
         print '%d Datasets could not be deleted and/or purged' % error
 
+
+    def _generic_command(self, fq):
+            package_search = tk.get_action('package_search')
+            package_delete = tk.get_action('package_delete')
+            context = {'model': model, 'session': model.Session, 'ignore_auth': True}
+            self.admin_user = tk.get_action('get_site_user')(context, {})
+            context = {'model': model, 'session': model.Session, 'user': self.admin_user['name']}
+
+            search_params = {'rows': 100000}
+            if fq:
+                search_params['fq'] = fq
+
+            result = package_search(context, search_params)
+            result = result['results']
+
+            for r in result:
+                print r['title'][0:40] + '... - ' + r['name']
+
+            print '============================================================='
+            print str(len(result)) + ' Datasets found.'
+            input = raw_input("Type in 'delete' for deleting all shown datasets. Type 'exit' for quitting. [delete/exit] ")
+
+            success = 0
+            error = 0
+            if input == 'delete':
+                for r in result:
+                    try:
+                        delete_result = package_delete(context, {'id': r['id']})
+                        print '%s deleted' % r['name']
+                        #self._purge(r['id'])
+                        success += 1
+                    except Exception as e:
+                        print 'ERROR: ' + e.message
+                        error += 1
+
+            print '============================================================='
+            print 'Successfully deleted and purged %d Datasets' % success
+            print '%d Datasets could not be deleted and/or purged' % error
+
+
     def _get_dataset(self, dataset_ref):
-        import ckan.model as model
-        dataset = model.Package.get(unicode(dataset_ref))
-        assert dataset, 'Could not find dataset matching reference: %r' % dataset_ref
-        return dataset
+            import ckan.model as model
+            dataset = model.Package.get(unicode(dataset_ref))
+            assert dataset, 'Could not find dataset matching reference: %r' % dataset_ref
+            return dataset
 
     def _purge(self, dataset_ref):
         from ckan import plugins
